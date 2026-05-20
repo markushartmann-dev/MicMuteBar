@@ -11,6 +11,7 @@ Press **Win+M** to mute or unmute all microphones at once. While muted, a colore
 - **One hotkey** mutes every microphone in the system simultaneously
 - **Status bar** appears on all monitors when muted, disappears when unmuted
 - **Click-through** — the bar never blocks anything you're working on
+- **Transparent** — configurable opacity so the bar blends into your workflow
 - **Tray icon** shows current state at a glance; right-click for settings and exit
 
 No Python. No .NET SDK. No installation. Runs on any Windows 10/11 machine with PowerShell 5.1, which is built into Windows.
@@ -28,11 +29,13 @@ No Python. No .NET SDK. No installation. Runs on any Windows 10/11 machine with 
 ## Getting started
 
 1. Download or clone the repository
-2. Double-click **`Start.bat`**
+2. Double-click **`MicMuteBar.exe`**
 3. A microphone icon appears in the system tray
 4. Press **Win+M** to toggle mute
 
 The bar appears on all monitors while muted and disappears when you unmute.
+
+> **Alternative:** Run `Start.bat` to launch via PowerShell directly (no EXE required).
 
 ---
 
@@ -46,6 +49,7 @@ Right-click the tray icon → **Einstellungen** (Settings):
 | Color | `#FF2020` | Bar background color (any hex value) |
 | Height | `18 px` | Bar height in pixels |
 | Width | `100 %` | Bar width as percentage of screen width |
+| Transparency | `90 %` | Opacity of the bar (10 = nearly invisible, 100 = fully opaque) |
 | Position | `top` | `top` or `bottom` of each screen |
 
 Settings are saved to `config.json` in the same folder.
@@ -54,11 +58,11 @@ Settings are saved to `config.json` in the same folder.
 
 ## How it works
 
-MicMuteBar is a single PowerShell script (~380 lines) with no external dependencies.
+MicMuteBar is a single PowerShell script (~420 lines) with no external dependencies.
 
 - **Hotkey** — uses a low-level Windows keyboard hook (`SetWindowsHookEx WH_KEYBOARD_LL`), so Win+M is always intercepted regardless of what other applications are doing with that shortcut
 - **Audio** — controls all capture devices via the Windows Core Audio API (COM) directly, no third-party audio library required
-- **Overlay** — one borderless, always-on-top WinForms window per monitor; click-through via `WM_NCHITTEST → HTTRANSPARENT`
+- **Overlay** — one borderless, always-on-top WinForms window per monitor; click-through via `WS_EX_TRANSPARENT` in `CreateParams` + `WM_NCHITTEST → HTTRANSPARENT`; transparency via `Form.Opacity`
 - **Tray** — standard `NotifyIcon` with a programmatically drawn icon that reflects mute state
 
 ---
@@ -66,7 +70,7 @@ MicMuteBar is a single PowerShell script (~380 lines) with no external dependenc
 ## Autostart with Windows
 
 1. Press **Win+R**, type `shell:startup`, press Enter
-2. Create a shortcut to `Start.bat` in that folder
+2. Create a shortcut to `MicMuteBar.exe` in that folder
 
 MicMuteBar will now start automatically when you log in.
 
