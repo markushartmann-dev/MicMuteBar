@@ -35,8 +35,6 @@ No Python. No .NET SDK. No installation. Runs on any Windows 10/11 machine with 
 
 The bar appears on all monitors while muted and disappears when you unmute.
 
-> **Alternative:** Run `Start.bat` to launch via PowerShell directly (no EXE required).
-
 ---
 
 ## Settings
