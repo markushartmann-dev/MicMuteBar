@@ -438,9 +438,8 @@ function Show-HotkeyCapture {
         $script:_capturedHotkey = @{ Mods = $mods; VK = $vk }
         $prev.Text = Get-HotkeyText $mods $vk
         $e.SuppressKeyPress = $true; $e.Handled = $true
-        $t = New-Object System.Windows.Forms.Timer; $t.Interval = 600
-        $t.add_Tick({ $t.Stop(); $cap.DialogResult = 'OK'; $cap.Close() })
-        $t.Start()
+        $s.DialogResult = 'OK'
+        $s.Close()
     })
     $cap.ShowDialog() | Out-Null
     return $script:_capturedHotkey
