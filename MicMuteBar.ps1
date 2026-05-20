@@ -10,7 +10,8 @@ Set-StrictMode -Off
 $ErrorActionPreference = 'Stop'
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-$cfgPath = Join-Path $PSScriptRoot "config.json"
+$scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent ([System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName) }
+$cfgPath = Join-Path $scriptDir "config.json"
 $defaults = [ordered]@{
     BarColor       = "#FF2020"
     BarHeight      = 18

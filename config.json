@@ -1,7 +1,7 @@
 ﻿{
     "BarText":  "MIC MUTED",
     "BarColor":  "#FF2020",
-    "BarHeight":  3,
+    "BarHeight":  2,
     "BarPosition":  "top",
-    "BarWidthPct":  100
+    "BarWidthPct":  80
 }
