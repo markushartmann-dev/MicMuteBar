@@ -17,6 +17,7 @@ $defaults = [ordered]@{
     BarPosition    = "top"   # top | bottom
     BarWidthPct    = 100     # 10-100
     BarText        = "MIC MUTED"
+    BarOpacity     = 90      # 10-100
 }
 if (Test-Path $cfgPath) {
     $raw = Get-Content $cfgPath -Raw | ConvertFrom-Json
@@ -47,6 +48,9 @@ public static class Win32 {
     [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
     [DllImport("user32.dll")] public static extern int  SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
     [DllImport("user32.dll")] public static extern int  GetWindowLong(IntPtr hWnd, int nIndex);
+    [DllImport("user32.dll")] public static extern bool SetLayeredWindowAttributes(IntPtr hWnd, uint crKey, byte bAlpha, uint dwFlags);
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndAfter, int x, int y, int cx, int cy, uint uFlags);
+    [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
 }
 
 // ──── Core Audio COM interfaces ────────────────────────────────────────────────
@@ -123,40 +127,62 @@ public static class AudioHelper {
 
 // ──── Click-through overlay bar ────────────────────────────────────────────────
 public class BarForm : Form {
-    const int WM_NCHITTEST  = 0x0084;
-    const int HTTRANSPARENT = -1;
+    const int    WM_NCHITTEST    = 0x0084;
+    const int    HTTRANSPARENT   = -1;
+    const int    GWL_EXSTYLE     = -20;
+    const int    WS_EX_LAYERED   = 0x00080000;
+    const int    WS_EX_TRANSPARENT = 0x00000020;
+    const int    WS_EX_NOACTIVATE  = 0x08000000;
+    const uint   LWA_ALPHA       = 0x2;
+    const uint   SWP_NOACTIVATE  = 0x0010;
+    const uint   SWP_NOZORDER    = 0x0004;
+    static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
 
     string _text;
+    int _x, _y, _w, _h;
+    byte _alpha;
 
-    public BarForm(int x, int y, int w, int h, string hexColor, double opacity, string text) {
+    public BarForm(int x, int y, int w, int h, string hexColor, byte alpha, string text) {
+        _x = x; _y = y; _w = w; _h = h; _alpha = alpha; _text = text;
+
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar   = false;
         TopMost         = true;
         BackColor       = ColorTranslator.FromHtml(hexColor);
-        Opacity         = opacity;
         StartPosition   = FormStartPosition.Manual;
-        AutoScaleMode   = AutoScaleMode.None;   // kein DPI-Rescaling
+        AutoScaleMode   = AutoScaleMode.None;
         MinimumSize     = System.Drawing.Size.Empty;
-        Location        = new System.Drawing.Point(x, y);
-        Size            = new System.Drawing.Size(w, h);
-        _text = text;
+        MaximumSize     = System.Drawing.Size.Empty;
+
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+        SetBounds(x, y, w, h);
     }
 
     protected override bool ShowWithoutActivation { get { return true; } }
 
-    // Alle Mausklicks durchreichen – zuverlaessiger als WS_EX_TRANSPARENT
+    protected override void OnHandleCreated(EventArgs e) {
+        base.OnHandleCreated(e);
+        // Layered + Transparent: Klicks gehen durch, Alpha wird manuell gesetzt
+        int s = Win32.GetWindowLong(Handle, GWL_EXSTYLE);
+        Win32.SetWindowLong(Handle, GWL_EXSTYLE, s | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE);
+        Win32.SetLayeredWindowAttributes(Handle, 0, _alpha, LWA_ALPHA);
+        // Exakte Groesse erzwingen (umgeht DPI-Skalierung durch WinForms)
+        Win32.SetWindowPos(Handle, HWND_TOPMOST, _x, _y, _w, _h, SWP_NOACTIVATE);
+    }
+
+    protected override void OnLoad(EventArgs e) {
+        base.OnLoad(e);
+        // Nochmal erzwingen, falls WinForms beim Laden skaliert hat
+        Win32.SetWindowPos(Handle, HWND_TOPMOST, _x, _y, _w, _h, SWP_NOACTIVATE);
+    }
+
+    // Doppelt abgesichert: WM_NCHITTEST -> HTTRANSPARENT leitet Klicks an Fenster dahinter
     protected override void WndProc(ref Message m) {
-        if (m.Msg == WM_NCHITTEST) {
-            m.Result = (IntPtr)HTTRANSPARENT;
-            return;
-        }
+        if (m.Msg == WM_NCHITTEST) { m.Result = (IntPtr)HTTRANSPARENT; return; }
         base.WndProc(ref m);
     }
 
-    protected override void OnPaintBackground(PaintEventArgs e) {
-        e.Graphics.Clear(BackColor);
-    }
+    protected override void OnPaintBackground(PaintEventArgs e) { e.Graphics.Clear(BackColor); }
 
     protected override void OnPaint(PaintEventArgs e) {
         if (string.IsNullOrEmpty(_text)) return;
@@ -252,7 +278,8 @@ function New-Bars {
         $bx  = $screen.Bounds.Left + ($screen.Bounds.Width - $bw) / 2
         $by  = if ($cfg.BarPosition -eq "bottom") { $screen.Bounds.Bottom - $bh }
                else { $screen.Bounds.Top }
-        $bar = New-Object BarForm $bx, $by, $bw, $bh, $cfg.BarColor, 0.88, $cfg.BarText
+        $alpha = [byte]([Math]::Max(10, [Math]::Min(100, [int]$cfg.BarOpacity)) * 255 / 100)
+        $bar = New-Object BarForm $bx, $by, $bw, $bh, $cfg.BarColor, $alpha, $cfg.BarText
         $result += $bar
     }
     return $result
@@ -262,7 +289,7 @@ function New-Bars {
 function Show-Settings {
     $dlg = New-Object System.Windows.Forms.Form
     $dlg.Text = "MicMuteBar - Einstellungen"
-    $dlg.Size = New-Object System.Drawing.Size 320, 272
+    $dlg.Size = New-Object System.Drawing.Size 320, 305
     $dlg.FormBorderStyle = 'FixedDialog'
     $dlg.MaximizeBox = $false; $dlg.MinimizeBox = $false
     $dlg.StartPosition = 'CenterScreen'
@@ -271,8 +298,9 @@ function Show-Settings {
     $fields = @(
         @{ Label="Text:";              Key="BarText";     Type="text" }
         @{ Label="Farbe (Hex):";       Key="BarColor";    Type="text" }
-        @{ Label="Balkenhöhe (px):";   Key="BarHeight";   Type="number"; Min=2;  Max=60  }
+        @{ Label="Balkenhoehe (px):";  Key="BarHeight";   Type="number"; Min=2;  Max=120 }
         @{ Label="Balkenbreite (%):";  Key="BarWidthPct"; Type="number"; Min=10; Max=100 }
+        @{ Label="Transparenz (%):";   Key="BarOpacity";  Type="number"; Min=10; Max=100 }
         @{ Label="Position:";          Key="BarPosition"; Type="combo";  Items=@("top","bottom") }
     )
 
@@ -313,6 +341,7 @@ function Show-Settings {
         $cfg.BarColor    = $controls["BarColor"].Text
         $cfg.BarHeight   = [int]$controls["BarHeight"].Value
         $cfg.BarWidthPct = [int]$controls["BarWidthPct"].Value
+        $cfg.BarOpacity  = [int]$controls["BarOpacity"].Value
         $cfg.BarPosition = $controls["BarPosition"].SelectedItem
         $cfg | ConvertTo-Json | Set-Content $cfgPath -Encoding UTF8
         return $true
@@ -322,6 +351,7 @@ function Show-Settings {
 
 # ── Hauptprogramm ──────────────────────────────────────────────────────────────
 [System.Windows.Forms.Application]::EnableVisualStyles()
+[Win32]::SetProcessDPIAware() | Out-Null   # physische Pixel, kein DPI-Scaling
 
 $muted = [AudioHelper]::IsAnyMuted()
 $bars  = New-Bars
@@ -373,10 +403,16 @@ $miExit.add_Click({
     [AudioHelper]::SetAllMuted($false)
     $hotkey.Dispose()
     $tray.Visible = $false
-    [System.Windows.Forms.Application]::Exit()
+    $script:anchor.Close()
 })
 
 # Doppelklick auf Tray = Toggle
 $tray.add_DoubleClick($toggle)
 
-[System.Windows.Forms.Application]::Run()
+# Anker-Form: haelt die Message-Loop am Leben (noetig fuer EXE via ps2exe)
+$anchor = New-Object System.Windows.Forms.Form
+$anchor.Opacity      = 0
+$anchor.ShowInTaskbar = $false
+$anchor.WindowState  = 'Minimized'
+$anchor.Size         = New-Object System.Drawing.Size 1,1
+[System.Windows.Forms.Application]::Run($anchor)
