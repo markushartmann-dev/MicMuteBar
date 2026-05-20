@@ -1,9 +1,9 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-    MicMuteBar — Win+M mutet alle Mikrofone, zeigt roten Balken auf jedem Monitor.
-    Tray-Icon: Rechtsklick → Einstellungen / Beenden
-    Konfiguration: config.json im selben Ordner
+    MicMuteBar — Win+M mutes all microphones and shows a status bar on every monitor.
+    Tray icon: right-click for Settings / Exit
+    Config: config.json in the same folder
 #>
 
 Set-StrictMode -Off
@@ -35,7 +35,7 @@ if (Test-Path $cfgPath) {
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-# ── C# Kern: Audio (Core Audio COM) + Hotkey + BarForm ────────────────────────
+# ── C# core: Audio (Core Audio COM) + keyboard hook + BarForm ────────────────
 Add-Type -ReferencedAssemblies 'System.Windows.Forms','System.Drawing' @'
 using System;
 using System.Collections.Generic;
@@ -200,7 +200,7 @@ public class BarForm : Form {
     }
 }
 
-// ──── Low-level keyboard hook (immer aktiv, ueberschreibt andere Apps) ────────
+// ──── Low-level keyboard hook (always active, overrides any other app) ────────
 public class KeyboardHook : IDisposable {
     [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc fn, IntPtr hMod, uint threadId);
     [DllImport("user32.dll")] static extern bool   UnhookWindowsHookEx(IntPtr hhk);
@@ -222,7 +222,7 @@ public class KeyboardHook : IDisposable {
     const int VK_RWIN        = 0x5C;
 
     IntPtr _hookId;
-    LowLevelKeyboardProc _cb;  // Referenz halten, sonst GC
+    LowLevelKeyboardProc _cb;  // keep reference to prevent GC collection
     bool _winDown;
     public event EventHandler Fired;
 
@@ -239,7 +239,7 @@ public class KeyboardHook : IDisposable {
                 _winDown = down;
             } else if (_winDown && info.vkCode == VK_M && down) {
                 if (Fired != null) Fired(this, EventArgs.Empty);
-                return (IntPtr)1;  // Taste unterdruecken
+                return (IntPtr)1;  // suppress the keystroke
             }
         }
         return CallNextHookEx(_hookId, nCode, wParam, lParam);
@@ -251,7 +251,7 @@ public class KeyboardHook : IDisposable {
 }
 '@
 
-# ── Tray-Icon erzeugen (programmatisch, kein .ico nötig) ──────────────────────
+# ── Tray icon (drawn programmatically, no .ico file needed) ───────────────────
 function New-TrayIcon([bool]$muted) {
     $bmp = New-Object System.Drawing.Bitmap 16,16
     $g = [System.Drawing.Graphics]::FromImage($bmp)
@@ -259,7 +259,7 @@ function New-TrayIcon([bool]$muted) {
     $col = if ($muted) { [System.Drawing.Color]::FromArgb(220,30,30) }
            else        { [System.Drawing.Color]::FromArgb(30,180,30) }
     $brush = New-Object System.Drawing.SolidBrush $col
-    # Mikrofon-Silhouette
+    # Microphone silhouette
     $g.FillEllipse($brush, 5, 1, 6, 8)
     $g.FillRectangle($brush, 7, 9, 2, 4)
     $g.FillRectangle($brush, 4, 13, 8, 2)
@@ -274,7 +274,7 @@ function New-TrayIcon([bool]$muted) {
     return $icon
 }
 
-# ── Balken pro Monitor anlegen ─────────────────────────────────────────────────
+# ── Create overlay bar for each monitor ───────────────────────────────────────
 function New-Bars {
     $result = @()
     foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
@@ -291,10 +291,10 @@ function New-Bars {
     return $result
 }
 
-# ── Einstellungen-Dialog ───────────────────────────────────────────────────────
+# ── Settings dialog ───────────────────────────────────────────────────────────
 function Show-Settings {
     $dlg = New-Object System.Windows.Forms.Form
-    $dlg.Text = "MicMuteBar - Einstellungen"
+    $dlg.Text = "MicMuteBar - Settings"
     $dlg.Size = New-Object System.Drawing.Size 320, 305
     $dlg.FormBorderStyle = 'FixedDialog'
     $dlg.MaximizeBox = $false; $dlg.MinimizeBox = $false
@@ -303,10 +303,10 @@ function Show-Settings {
 
     $fields = @(
         @{ Label="Text:";              Key="BarText";     Type="text" }
-        @{ Label="Farbe (Hex):";       Key="BarColor";    Type="text" }
-        @{ Label="Balkenhoehe (px):";  Key="BarHeight";   Type="number"; Min=2;  Max=120 }
-        @{ Label="Balkenbreite (%):";  Key="BarWidthPct"; Type="number"; Min=10; Max=100 }
-        @{ Label="Transparenz (%):";   Key="BarOpacity";  Type="number"; Min=10; Max=100 }
+        @{ Label="Color (Hex):";       Key="BarColor";    Type="text" }
+        @{ Label="Bar Height (px):";   Key="BarHeight";   Type="number"; Min=2;  Max=120 }
+        @{ Label="Bar Width (%):";     Key="BarWidthPct"; Type="number"; Min=10; Max=100 }
+        @{ Label="Opacity (%):";       Key="BarOpacity";  Type="number"; Min=10; Max=100 }
         @{ Label="Position:";          Key="BarPosition"; Type="combo";  Items=@("top","bottom") }
     )
 
@@ -338,7 +338,7 @@ function Show-Settings {
     }
 
     $btn = New-Object System.Windows.Forms.Button
-    $btn.Text = "Übernehmen"; $btn.Location = New-Object System.Drawing.Point 90,($y+4)
+    $btn.Text = "Apply"; $btn.Location = New-Object System.Drawing.Point 90,($y+4)
     $btn.Size = New-Object System.Drawing.Size 130,28; $btn.DialogResult = 'OK'
     $dlg.Controls.Add($btn); $dlg.AcceptButton = $btn
 
@@ -355,25 +355,25 @@ function Show-Settings {
     return $false
 }
 
-# ── Hauptprogramm ──────────────────────────────────────────────────────────────
+# ── Main ──────────────────────────────────────────────────────────────────────
 [System.Windows.Forms.Application]::EnableVisualStyles()
-[Win32]::SetProcessDPIAware() | Out-Null   # physische Pixel, kein DPI-Scaling
+[Win32]::SetProcessDPIAware() | Out-Null
 
 $muted = [AudioHelper]::IsAnyMuted()
 $bars  = New-Bars
 
-# Tray-Icon
+# Tray icon
 $tray = New-Object System.Windows.Forms.NotifyIcon
 $tray.Icon    = New-TrayIcon $muted
 $tray.Text    = if ($muted) { "MicMuteBar - MUTED" } else { "MicMuteBar" }
 $tray.Visible = $true
 
 $menu    = New-Object System.Windows.Forms.ContextMenuStrip
-$miSet   = $menu.Items.Add("Einstellungen")
-$miExit  = $menu.Items.Add("Beenden")
+$miSet   = $menu.Items.Add("Settings")
+$miExit  = $menu.Items.Add("Exit")
 $tray.ContextMenuStrip = $menu
 
-# Balken anzeigen/verbergen
+# Show or hide all bars
 function Set-BarsVisible([bool]$show) {
     foreach ($b in $bars) {
         if ($show) { $b.Show() }
@@ -392,11 +392,11 @@ $toggle = {
     $tray.Text = if ($script:muted) { "MicMuteBar - MUTED" } else { "MicMuteBar" }
 }
 
-# Low-level Hook fuer Win+M (funktioniert immer, egal was andere Apps belegen)
+# Low-level hook for Win+M (always fires regardless of other apps)
 $hotkey = New-Object KeyboardHook
 $hotkey.add_Fired($toggle)
 
-# Tray-Menü Events
+# Tray menu events
 $miSet.add_Click({
     if (Show-Settings) {
         foreach ($b in $script:bars) { $b.Dispose() }
@@ -412,10 +412,10 @@ $miExit.add_Click({
     $script:anchor.Close()
 })
 
-# Doppelklick auf Tray = Toggle
+# Double-click tray icon = toggle
 $tray.add_DoubleClick($toggle)
 
-# Anker-Form: haelt die Message-Loop am Leben (noetig fuer EXE via ps2exe)
+# Anchor form: keeps the message loop alive (required for ps2exe EXE)
 $anchor = New-Object System.Windows.Forms.Form
 $anchor.Opacity      = 0
 $anchor.ShowInTaskbar = $false
