@@ -4,3 +4,6 @@ desktop.ini
 
 # PowerShell temp
 *.tmp
+
+# Runtime config (auto-generated)
+config.json
