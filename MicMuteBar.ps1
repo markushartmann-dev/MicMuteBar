@@ -128,28 +128,25 @@ public static class AudioHelper {
 
 // ──── Click-through overlay bar ────────────────────────────────────────────────
 public class BarForm : Form {
-    const int    WM_NCHITTEST    = 0x0084;
-    const int    HTTRANSPARENT   = -1;
-    const int    GWL_EXSTYLE     = -20;
-    const int    WS_EX_LAYERED   = 0x00080000;
+    const int    WM_NCHITTEST      = 0x0084;
+    const int    HTTRANSPARENT     = -1;
     const int    WS_EX_TRANSPARENT = 0x00000020;
     const int    WS_EX_NOACTIVATE  = 0x08000000;
-    const uint   LWA_ALPHA       = 0x2;
-    const uint   SWP_NOACTIVATE  = 0x0010;
-    const uint   SWP_NOZORDER    = 0x0004;
+    const int    WS_EX_TOOLWINDOW  = 0x00000080;
+    const uint   SWP_NOACTIVATE    = 0x0010;
     static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
 
     string _text;
     int _x, _y, _w, _h;
-    byte _alpha;
 
     public BarForm(int x, int y, int w, int h, string hexColor, byte alpha, string text) {
-        _x = x; _y = y; _w = w; _h = h; _alpha = alpha; _text = text;
+        _x = x; _y = y; _w = w; _h = h; _text = text;
 
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar   = false;
         TopMost         = true;
         BackColor       = ColorTranslator.FromHtml(hexColor);
+        Opacity         = (double)alpha / 255.0;
         StartPosition   = FormStartPosition.Manual;
         AutoScaleMode   = AutoScaleMode.None;
         MinimumSize     = System.Drawing.Size.Empty;
@@ -159,25 +156,33 @@ public class BarForm : Form {
         SetBounds(x, y, w, h);
     }
 
+    // Styles at window creation — reliable click-through without SetWindowLong tricks
+    protected override CreateParams CreateParams {
+        get {
+            CreateParams cp = base.CreateParams;
+            cp.ExStyle |= WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+            return cp;
+        }
+    }
+
     protected override bool ShowWithoutActivation { get { return true; } }
 
     protected override void OnHandleCreated(EventArgs e) {
         base.OnHandleCreated(e);
-        // Layered + Transparent: Klicks gehen durch, Alpha wird manuell gesetzt
-        int s = Win32.GetWindowLong(Handle, GWL_EXSTYLE);
-        Win32.SetWindowLong(Handle, GWL_EXSTYLE, s | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE);
-        Win32.SetLayeredWindowAttributes(Handle, 0, _alpha, LWA_ALPHA);
-        // Exakte Groesse erzwingen (umgeht DPI-Skalierung durch WinForms)
         Win32.SetWindowPos(Handle, HWND_TOPMOST, _x, _y, _w, _h, SWP_NOACTIVATE);
     }
 
     protected override void OnLoad(EventArgs e) {
         base.OnLoad(e);
-        // Nochmal erzwingen, falls WinForms beim Laden skaliert hat
         Win32.SetWindowPos(Handle, HWND_TOPMOST, _x, _y, _w, _h, SWP_NOACTIVATE);
     }
 
-    // Doppelt abgesichert: WM_NCHITTEST -> HTTRANSPARENT leitet Klicks an Fenster dahinter
+    // Re-enforce topmost on every Show() call
+    protected override void OnVisibleChanged(EventArgs e) {
+        base.OnVisibleChanged(e);
+        if (Visible) Win32.SetWindowPos(Handle, HWND_TOPMOST, _x, _y, _w, _h, SWP_NOACTIVATE);
+    }
+
     protected override void WndProc(ref Message m) {
         if (m.Msg == WM_NCHITTEST) { m.Result = (IntPtr)HTTRANSPARENT; return; }
         base.WndProc(ref m);
@@ -371,7 +376,7 @@ $tray.ContextMenuStrip = $menu
 # Balken anzeigen/verbergen
 function Set-BarsVisible([bool]$show) {
     foreach ($b in $bars) {
-        if ($show) { $b.Show(); $b.BringToFront() }
+        if ($show) { $b.Show() }
         else       { $b.Hide() }
     }
 }
