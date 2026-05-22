@@ -242,65 +242,71 @@ public class CircleForm : OverlayBase {
     protected override void OnPaint(PaintEventArgs e) { /* region clips window to circle shape */ }
 }
 
-// ──── Low-level keyboard hook (always active, overrides any other app) ─────────
-public class KeyboardHook : IDisposable {
-    [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc fn, IntPtr hMod, uint threadId);
-    [DllImport("user32.dll")] static extern bool   UnhookWindowsHookEx(IntPtr hhk);
-    [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-    delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+// ──── Anchor form: message loop + global hotkey via RegisterHotKey ───────────────
+// RegisterHotKey delivers WM_HOTKEY through the normal message queue, so it works
+// on the desktop, in apps, and everywhere — unlike WH_KEYBOARD_LL which is bypassed
+// by the Windows shell when no application window has focus.
+public class AnchorForm : Form {
+    [DllImport("user32.dll")] static extern bool   RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+    [DllImport("user32.dll")] static extern bool   UnregisterHotKey(IntPtr hWnd, int id);
+    [DllImport("kernel32.dll")] static extern int    GlobalAddAtom(string lpString);
+    [DllImport("kernel32.dll")] static extern ushort GlobalDeleteAtom(ushort nAtom);
 
-    [StructLayout(LayoutKind.Sequential)]
-    struct KBDLLHOOKSTRUCT { public uint vkCode, scanCode, flags, time; public IntPtr dwExtraInfo; }
+    const int  WM_HOTKEY    = 0x0312;
+    const uint MOD_ALT      = 0x0001;
+    const uint MOD_CONTROL  = 0x0002;
+    const uint MOD_SHIFT    = 0x0004;
+    const uint MOD_WIN      = 0x0008;
+    const uint MOD_NOREPEAT = 0x4000;
 
-    const int WH_KEYBOARD_LL = 13;
-    const int WM_KEYDOWN     = 0x0100;
-    const int WM_SYSKEYDOWN  = 0x0104;
+    int _atomId;
+    public event EventHandler HotkeyFired;
 
-    int  _modMask, _triggerVK;
-    bool _ctrlDown, _shiftDown, _altDown;
-    IntPtr _hookId;
-    LowLevelKeyboardProc _cb;  // keep reference to prevent GC collection
-    public bool Suspended { get; set; }
-    public event EventHandler Fired;
-
-    public KeyboardHook(int modMask, int triggerVK) {
-        _modMask = modMask; _triggerVK = triggerVK;
-        _cb = Callback;
-        _hookId = SetWindowsHookEx(WH_KEYBOARD_LL, _cb, IntPtr.Zero, 0);
+    public AnchorForm() {
+        Opacity         = 0;
+        ShowInTaskbar   = false;
+        FormBorderStyle = FormBorderStyle.None;
+        Size            = new System.Drawing.Size(1, 1);
     }
 
-    IntPtr Callback(int nCode, IntPtr wParam, IntPtr lParam) {
-        if (!Suspended && nCode >= 0) {
-            var info = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
-            bool down = wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN;
-            int  vk   = (int)info.vkCode;
+    protected override CreateParams CreateParams {
+        get { var cp = base.CreateParams; cp.ExStyle |= 0x00000080; return cp; }  // WS_EX_TOOLWINDOW
+    }
 
-            if (vk == 0xA2 || vk == 0xA3) _ctrlDown  = down;
-            if (vk == 0xA0 || vk == 0xA1) _shiftDown = down;
-            if (vk == 0xA4 || vk == 0xA5) _altDown   = down;
-
-            if (vk == _triggerVK && down) {
-                int cur = 0;
-                if (_ctrlDown)  cur |= 1;
-                if (_shiftDown) cur |= 2;
-                if (_altDown)   cur |= 4;
-                // Use GetAsyncKeyState for Win key: Windows injects a synthetic Win key-up event
-                // when it processes Win+X shortcuts on the desktop (e.g. Win+M = Minimize All),
-                // which causes a tracked boolean flag to become false before the trigger key arrives.
-                // GetAsyncKeyState reads the actual hardware state and is not affected by this.
-                if ((Win32.GetAsyncKeyState(0x5B) & 0x8000) != 0 ||
-                    (Win32.GetAsyncKeyState(0x5C) & 0x8000) != 0) cur |= 8;
-                if (cur == _modMask) {
-                    if (Fired != null) Fired(this, EventArgs.Empty);
-                    return (IntPtr)1;  // suppress the keystroke
-                }
-            }
+    public bool SetHotkey(int modMask, int vk) {
+        ClearHotkey();
+        string name = "MicMuteBar_" + GetHashCode();
+        _atomId = GlobalAddAtom(name);
+        if (_atomId == 0) return false;
+        uint mods = MOD_NOREPEAT;
+        if ((modMask & 1) != 0) mods |= MOD_CONTROL;
+        if ((modMask & 2) != 0) mods |= MOD_SHIFT;
+        if ((modMask & 4) != 0) mods |= MOD_ALT;
+        if ((modMask & 8) != 0) mods |= MOD_WIN;
+        if (!RegisterHotKey(Handle, _atomId, mods, (uint)vk)) {
+            GlobalDeleteAtom((ushort)_atomId); _atomId = 0; return false;
         }
-        return CallNextHookEx(_hookId, nCode, wParam, lParam);
+        return true;
     }
 
-    public void Dispose() {
-        if (_hookId != IntPtr.Zero) { UnhookWindowsHookEx(_hookId); _hookId = IntPtr.Zero; }
+    public void ClearHotkey() {
+        if (_atomId != 0 && IsHandleCreated) {
+            UnregisterHotKey(Handle, _atomId);
+            GlobalDeleteAtom((ushort)_atomId);
+            _atomId = 0;
+        }
+    }
+
+    protected override void WndProc(ref Message m) {
+        if (m.Msg == WM_HOTKEY && _atomId != 0 && m.WParam.ToInt32() == _atomId) {
+            if (HotkeyFired != null) HotkeyFired(this, EventArgs.Empty);
+            return;
+        }
+        base.WndProc(ref m);
+    }
+
+    protected override void OnFormClosed(FormClosedEventArgs e) {
+        ClearHotkey(); base.OnFormClosed(e);
     }
 }
 '@
@@ -533,9 +539,9 @@ function Show-Settings {
     $script:_pendingVK   = [int]$cfg.HotkeyVK
 
     $btnChange.add_Click({
-        $script:hotkey.Suspended = $true
+        # Hotkey is already unregistered while settings is open (done by caller).
+        # Just capture the new combination — no need to suspend/resume anything.
         $cap = Show-HotkeyCapture
-        $script:hotkey.Suspended = $false
         if ($cap) {
             $script:_pendingMods = $cap.Mods
             $script:_pendingVK   = $cap.VK
@@ -550,7 +556,6 @@ function Show-Settings {
     $dlg.Controls.Add($btn); $dlg.AcceptButton = $btn
 
     if ($dlg.ShowDialog() -eq 'OK') {
-        $hotkeyChanged   = ($script:_pendingMods -ne [int]$cfg.HotkeyMods -or $script:_pendingVK -ne [int]$cfg.HotkeyVK)
         $cfg.BarText       = $txtText.Text
         $cfg.BarColor      = $txtColor.Text
         $cfg.BarOpacity    = [int]$nudOpacity.Value
@@ -564,11 +569,6 @@ function Show-Settings {
         $cfg.HotkeyMods    = $script:_pendingMods
         $cfg.HotkeyVK      = $script:_pendingVK
         $cfg | ConvertTo-Json | Set-Content $cfgPath -Encoding UTF8
-        if ($hotkeyChanged) {
-            $script:hotkey.Dispose()
-            $script:hotkey = New-Object KeyboardHook $script:_pendingMods, $script:_pendingVK
-            $script:hotkey.add_Fired($script:toggle)
-        }
         return $true
     }
     return $false
@@ -608,18 +608,18 @@ $script:toggle = {
     $tray.Text = if ($script:muted) { "MicMuteBar - MUTED" } else { "MicMuteBar" }
 }
 
-# Low-level hook for the configured hotkey (always fires regardless of other apps)
-$hotkey = New-Object KeyboardHook ([int]$cfg.HotkeyMods), ([int]$cfg.HotkeyVK)
-$hotkey.add_Fired($script:toggle)
-
 # Tray menu events
 $miSet.add_Click({
+    # Unregister hotkey while settings dialog is open so the capture dialog can catch it
+    $script:anchor.ClearHotkey()
     if (Show-Settings) {
         Remove-Indicator
         [System.Windows.Forms.Application]::DoEvents()
         New-Indicator
         Set-IndicatorVisible $script:muted
     }
+    # Re-register with whatever is now in config (new or unchanged)
+    $script:anchor.SetHotkey([int]$cfg.HotkeyMods, [int]$cfg.HotkeyVK) | Out-Null
 })
 $miAutostart.add_Click({
     $newState = -not (Get-AutostartEnabled)
@@ -628,18 +628,15 @@ $miAutostart.add_Click({
 })
 $miExit.add_Click({
     [AudioHelper]::SetAllMuted($false)
-    $hotkey.Dispose()
     $tray.Visible = $false
-    $script:anchor.Close()
+    $script:anchor.Close()  # OnFormClosed calls ClearHotkey automatically
 })
 
 # Double-click tray icon = toggle
 $tray.add_DoubleClick($script:toggle)
 
-# Anchor form: keeps the message loop alive (required for ps2exe EXE)
-$anchor = New-Object System.Windows.Forms.Form
-$anchor.Opacity       = 0
-$anchor.ShowInTaskbar = $false
-$anchor.WindowState   = 'Minimized'
-$anchor.Size          = New-Object System.Drawing.Size 1,1
+# Anchor form: message loop + global hotkey (RegisterHotKey works on desktop too)
+$anchor = New-Object AnchorForm
+$anchor.add_HotkeyFired($script:toggle)
+$anchor.add_Load({ $script:anchor.SetHotkey([int]$cfg.HotkeyMods, [int]$cfg.HotkeyVK) | Out-Null })
 [System.Windows.Forms.Application]::Run($anchor)
