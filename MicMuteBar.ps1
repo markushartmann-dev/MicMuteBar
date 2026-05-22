@@ -638,5 +638,8 @@ $tray.add_DoubleClick($script:toggle)
 # Anchor form: message loop + global hotkey (RegisterHotKey works on desktop too)
 $anchor = New-Object AnchorForm
 $anchor.add_HotkeyFired($script:toggle)
-$anchor.add_Load({ $script:anchor.SetHotkey([int]$cfg.HotkeyMods, [int]$cfg.HotkeyVK) | Out-Null })
+# Force HWND creation before Application.Run so RegisterHotKey gets a valid handle
+# without relying on a Load-event closure (closures can't resolve $cfg in ps2exe).
+$null = $anchor.Handle
+$anchor.SetHotkey([int]$cfg.HotkeyMods, [int]$cfg.HotkeyVK) | Out-Null
 [System.Windows.Forms.Application]::Run($anchor)
