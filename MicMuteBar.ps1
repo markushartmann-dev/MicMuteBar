@@ -257,7 +257,7 @@ public class KeyboardHook : IDisposable {
     const int WM_SYSKEYDOWN  = 0x0104;
 
     int  _modMask, _triggerVK;
-    bool _ctrlDown, _shiftDown, _altDown, _winDown;
+    bool _ctrlDown, _shiftDown, _altDown;
     IntPtr _hookId;
     LowLevelKeyboardProc _cb;  // keep reference to prevent GC collection
     public bool Suspended { get; set; }
@@ -278,14 +278,18 @@ public class KeyboardHook : IDisposable {
             if (vk == 0xA2 || vk == 0xA3) _ctrlDown  = down;
             if (vk == 0xA0 || vk == 0xA1) _shiftDown = down;
             if (vk == 0xA4 || vk == 0xA5) _altDown   = down;
-            if (vk == 0x5B || vk == 0x5C) _winDown   = down;
 
             if (vk == _triggerVK && down) {
                 int cur = 0;
                 if (_ctrlDown)  cur |= 1;
                 if (_shiftDown) cur |= 2;
                 if (_altDown)   cur |= 4;
-                if (_winDown)   cur |= 8;
+                // Use GetAsyncKeyState for Win key: Windows injects a synthetic Win key-up event
+                // when it processes Win+X shortcuts on the desktop (e.g. Win+M = Minimize All),
+                // which causes a tracked boolean flag to become false before the trigger key arrives.
+                // GetAsyncKeyState reads the actual hardware state and is not affected by this.
+                if ((Win32.GetAsyncKeyState(0x5B) & 0x8000) != 0 ||
+                    (Win32.GetAsyncKeyState(0x5C) & 0x8000) != 0) cur |= 8;
                 if (cur == _modMask) {
                     if (Fired != null) Fired(this, EventArgs.Empty);
                     return (IntPtr)1;  // suppress the keystroke
