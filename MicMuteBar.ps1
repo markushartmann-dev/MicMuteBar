@@ -368,12 +368,23 @@ function New-Bars {
     $result = @()
     foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
         $pct   = [Math]::Max(10, [Math]::Min(100, [int]$cfg.BarWidthPct))
-        $bw    = [int]($screen.Bounds.Width * $pct / 100)
-        $bh    = [Math]::Max(2, [int]$cfg.BarHeight)
-        $bx    = $screen.Bounds.Left + ($screen.Bounds.Width - $bw) / 2
-        $by    = if ($cfg.BarPosition -eq "bottom") { $screen.Bounds.Bottom - $bh } else { $screen.Bounds.Top }
         $alpha = [byte]([Math]::Max(10, [Math]::Min(100, [int]$cfg.BarOpacity)) * 255 / 100)
-        $result += New-Object BarForm $bx, $by, $bw, $bh, $cfg.BarColor, $alpha, $cfg.BarText
+        $pos   = $cfg.BarPosition
+        if ($pos -eq "left" -or $pos -eq "right") {
+            # Vertical bar: BarHeight = thickness, BarWidthPct applies to screen height
+            $bw  = [Math]::Max(2, [int]$cfg.BarHeight)
+            $bh  = [int]($screen.Bounds.Height * $pct / 100)
+            $bx  = if ($pos -eq "right") { $screen.Bounds.Right - $bw } else { $screen.Bounds.Left }
+            $by  = $screen.Bounds.Top + [int](($screen.Bounds.Height - $bh) / 2)
+            $result += New-Object BarForm $bx, $by, $bw, $bh, $cfg.BarColor, $alpha, ""
+        } else {
+            # Horizontal bar: BarHeight = thickness, BarWidthPct applies to screen width
+            $bw  = [int]($screen.Bounds.Width * $pct / 100)
+            $bh  = [Math]::Max(2, [int]$cfg.BarHeight)
+            $bx  = $screen.Bounds.Left + [int](($screen.Bounds.Width - $bw) / 2)
+            $by  = if ($pos -eq "bottom") { $screen.Bounds.Bottom - $bh } else { $screen.Bounds.Top }
+            $result += New-Object BarForm $bx, $by, $bw, $bh, $cfg.BarColor, $alpha, $cfg.BarText
+        }
     }
     return $result
 }
@@ -487,8 +498,34 @@ function Show-Settings {
     @("bar","circle") | ForEach-Object { $cboType.Items.Add($_) | Out-Null }
     $cboType.SelectedItem = if ($cfg.IndicatorType -eq "circle") { "circle" } else { "bar" }
 
-    Add-Row "Text:"          $txtText    $y; $y += 32
-    Add-Row "Color (Hex):"   $txtColor   $y; $y += 32
+    Add-Row "Text:"        $txtText    $y; $y += 32
+
+    # Color row — hex input + live swatch + color picker button
+    $lColor = New-Object System.Windows.Forms.Label; $lColor.Text = "Color (Hex):"
+    $lColor.Location = New-Object System.Drawing.Point 12,($y+3); $lColor.Size = New-Object System.Drawing.Size 140,20
+    $dlg.Controls.Add($lColor)
+    $txtColor.Location = New-Object System.Drawing.Point 158,$y; $txtColor.Size = New-Object System.Drawing.Size 110,22
+    $dlg.Controls.Add($txtColor)
+    $pnlColor = New-Object System.Windows.Forms.Panel
+    $pnlColor.Location = New-Object System.Drawing.Point 272,$y; $pnlColor.Size = New-Object System.Drawing.Size 22,22
+    $pnlColor.BorderStyle = 'FixedSingle'
+    try { $pnlColor.BackColor = [System.Drawing.ColorTranslator]::FromHtml($cfg.BarColor) } catch {}
+    $dlg.Controls.Add($pnlColor)
+    $btnPick = New-Object System.Windows.Forms.Button
+    $btnPick.Text = "Pick"; $btnPick.Location = New-Object System.Drawing.Point 298,$y
+    $btnPick.Size = New-Object System.Drawing.Size 50,22; $dlg.Controls.Add($btnPick)
+    $txtColor.add_TextChanged({
+        try { $pnlColor.BackColor = [System.Drawing.ColorTranslator]::FromHtml($txtColor.Text) } catch {}
+    })
+    $btnPick.add_Click({
+        $cd = New-Object System.Windows.Forms.ColorDialog; $cd.FullOpen = $true
+        try { $cd.Color = [System.Drawing.ColorTranslator]::FromHtml($txtColor.Text) } catch {}
+        if ($cd.ShowDialog() -eq 'OK') {
+            $txtColor.Text = "#{0:X2}{1:X2}{2:X2}" -f $cd.Color.R, $cd.Color.G, $cd.Color.B
+        }
+    })
+    $y += 32
+
     Add-Row "Opacity (%):"   $nudOpacity $y; $y += 32
     Add-Row "Indicator:"     $cboType    $y; $y += 32
 
@@ -499,8 +536,8 @@ function Show-Settings {
     $nudWidth  = New-Object System.Windows.Forms.NumericUpDown; $nudWidth.Minimum=10;  $nudWidth.Maximum=100
     $nudWidth.Value  = [Math]::Max(10,[Math]::Min(100,[int]$cfg.BarWidthPct))
     $cboPos    = New-Object System.Windows.Forms.ComboBox;      $cboPos.DropDownStyle='DropDownList'
-    @("top","bottom") | ForEach-Object { $cboPos.Items.Add($_) | Out-Null }
-    $cboPos.SelectedItem = if ($cfg.BarPosition -eq "bottom") { "bottom" } else { "top" }
+    @("top","bottom","left","right") | ForEach-Object { $cboPos.Items.Add($_) | Out-Null }
+    $cboPos.SelectedItem = switch ($cfg.BarPosition) { "bottom" {"bottom"} "left" {"left"} "right" {"right"} default {"top"} }
 
     Add-Row "Bar Height (px):" $nudHeight $y; $y += 32
     Add-Row "Bar Width (%):"   $nudWidth  $y; $y += 32

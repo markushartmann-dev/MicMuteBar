@@ -57,9 +57,9 @@ Right-click the tray icon → **Settings**:
 ### Bar
 | Option | Default | Description |
 |---|---|---|
-| Bar Height | `18 px` | Height of the bar in pixels |
-| Bar Width | `100 %` | Width as percentage of each screen |
-| Bar Position | `top` | `top` or `bottom` of each screen |
+| Bar Height | `18 px` | Thickness of the bar in pixels |
+| Bar Width | `100 %` | Length as percentage of the screen edge |
+| Bar Position | `top` | `top` · `bottom` · `left` · `right` — which edge of each screen |
 
 ### Circle
 | Option | Default | Description |
