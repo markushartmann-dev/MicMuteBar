@@ -19,8 +19,8 @@ $defaults  = [ordered]@{
     BarWidthPct   = 100       # 10-100
     BarText       = "MIC MUTED"
     BarOpacity    = 90        # 10-100
-    HotkeyMods    = 8         # bitmask: 1=Ctrl 2=Shift 4=Alt 8=Win
-    HotkeyVK      = 77        # virtual-key code (77 = M)
+    HotkeyMods    = 7         # bitmask: 1=Ctrl 2=Shift 4=Alt 8=Win  (default: Ctrl+Shift+Alt)
+    HotkeyVK      = 80        # virtual-key code (80 = P)
     IndicatorType    = "bar"     # bar | circle | border | corner
     CircleSize       = 80        # diameter in pixels
     CircleX          = 50        # % from left of primary screen
@@ -29,6 +29,8 @@ $defaults  = [ordered]@{
     BorderGap        = 0         # inset from screen edge in pixels
     CornerSize       = 40        # corner square size in pixels
     CornerOffset     = 0         # offset from screen corners in pixels
+    Pulse            = $false    # pulse (alternate between two colors) while muted
+    PulseColor       = "#FF8000" # second color for the pulse effect
 }
 if (Test-Path $cfgPath) {
     $raw = Get-Content $cfgPath -Raw | ConvertFrom-Json
@@ -467,6 +469,14 @@ function Set-IndicatorVisible([bool]$show) {
     }
 }
 
+function Set-IndicatorColor([string]$hex) {
+    try {
+        $color = [System.Drawing.ColorTranslator]::FromHtml($hex)
+        foreach ($b in $script:bars)  { $b.BackColor = $color; $b.Refresh() }
+        if ($script:circle)           { $script:circle.BackColor = $color; $script:circle.Refresh() }
+    } catch {}
+}
+
 # ── Hotkey capture dialog ──────────────────────────────────────────────────────
 function Show-HotkeyCapture {
     $cap = New-Object System.Windows.Forms.Form
@@ -644,12 +654,57 @@ function Show-Settings {
     })
     $y += 36
 
+    # ── Startup ───────────────────────────────────────────────────────────────────
+    $chkAutostart = New-Object System.Windows.Forms.CheckBox
+    $chkAutostart.Text = "Start with Windows"
+    $chkAutostart.Checked = Get-AutostartEnabled
+    $chkAutostart.AutoSize = $false
+    $chkAutostart.Location = New-Object System.Drawing.Point 158,$y
+    $chkAutostart.Size = New-Object System.Drawing.Size 200,22
+    $dlg.Controls.Add($chkAutostart)
+    $lAutost = New-Object System.Windows.Forms.Label; $lAutost.Text = "Startup:"
+    $lAutost.Location = New-Object System.Drawing.Point 12,($y+3); $lAutost.Size = New-Object System.Drawing.Size 140,20; $dlg.Controls.Add($lAutost)
+    $y += 32
+
+    $chkBlink = New-Object System.Windows.Forms.CheckBox
+    $chkBlink.Text = "Pulse when muted"
+    $chkBlink.Checked = [bool]$cfg.Pulse
+    $chkBlink.AutoSize = $false
+    $chkBlink.Location = New-Object System.Drawing.Point 158,$y
+    $chkBlink.Size = New-Object System.Drawing.Size 200,22
+    $dlg.Controls.Add($chkBlink)
+    $lBlink = New-Object System.Windows.Forms.Label; $lBlink.Text = "Effect:"
+    $lBlink.Location = New-Object System.Drawing.Point 12,($y+3); $lBlink.Size = New-Object System.Drawing.Size 140,20; $dlg.Controls.Add($lBlink)
+    $y += 32
+
+    # Pulse second color — same picker pattern as main color
+    $txtPulseColor = New-Object System.Windows.Forms.TextBox; $txtPulseColor.Text = $cfg.PulseColor
+    $lpClr = New-Object System.Windows.Forms.Label; $lpClr.Text = "Pulse color:"
+    $lpClr.Location = New-Object System.Drawing.Point 12,($y+3); $lpClr.Size = New-Object System.Drawing.Size 140,20; $dlg.Controls.Add($lpClr)
+    $txtPulseColor.Location = New-Object System.Drawing.Point 158,$y; $txtPulseColor.Size = New-Object System.Drawing.Size 110,22; $dlg.Controls.Add($txtPulseColor)
+    $pnlPulse = New-Object System.Windows.Forms.Panel
+    $pnlPulse.Location = New-Object System.Drawing.Point 272,$y; $pnlPulse.Size = New-Object System.Drawing.Size 22,22
+    $pnlPulse.BorderStyle = 'FixedSingle'
+    try { $pnlPulse.BackColor = [System.Drawing.ColorTranslator]::FromHtml($cfg.PulseColor) } catch {}
+    $dlg.Controls.Add($pnlPulse)
+    $btnPulsePick = New-Object System.Windows.Forms.Button
+    $btnPulsePick.Text = "Pick"; $btnPulsePick.Location = New-Object System.Drawing.Point 298,$y
+    $btnPulsePick.Size = New-Object System.Drawing.Size 50,22; $dlg.Controls.Add($btnPulsePick)
+    $txtPulseColor.add_TextChanged({ try { $pnlPulse.BackColor = [System.Drawing.ColorTranslator]::FromHtml($txtPulseColor.Text) } catch {} })
+    $btnPulsePick.add_Click({
+        $cd = New-Object System.Windows.Forms.ColorDialog; $cd.FullOpen = $true
+        try { $cd.Color = [System.Drawing.ColorTranslator]::FromHtml($txtPulseColor.Text) } catch {}
+        if ($cd.ShowDialog() -eq 'OK') { $txtPulseColor.Text = "#{0:X2}{1:X2}{2:X2}" -f $cd.Color.R, $cd.Color.G, $cd.Color.B }
+    })
+    $y += 32
+
     # ── Apply ─────────────────────────────────────────────────────────────────────
     $btnOK = New-Object System.Windows.Forms.Button
     $btnOK.Text = "Apply"; $btnOK.Location = New-Object System.Drawing.Point 120,($y+6)
     $btnOK.Size = New-Object System.Drawing.Size 130,28; $btnOK.DialogResult = 'OK'
     $dlg.Controls.Add($btnOK); $dlg.AcceptButton = $btnOK
-    $dlg.Size = New-Object System.Drawing.Size 380,($y+50)
+    # ClientSize sets the inner area — avoids title-bar being counted, preventing cut-off
+    $dlg.ClientSize = New-Object System.Drawing.Size 380,($y+50)
 
     # ── Show/hide indicator panels on type change ─────────────────────────────────
     # Uses individual panel variables — avoids hashtable/array closure issues in ps2exe
@@ -685,7 +740,10 @@ function Show-Settings {
         $cfg.CornerOffset    = [int]$nudCornO.Value
         $cfg.HotkeyMods      = $script:_pendingMods
         $cfg.HotkeyVK        = $script:_pendingVK
+        $cfg.Pulse           = [bool]$chkBlink.Checked
+        $cfg.PulseColor      = $txtPulseColor.Text
         $cfg | ConvertTo-Json | Set-Content $cfgPath -Encoding UTF8
+        Set-Autostart $chkAutostart.Checked
         return $true
     }
     return $false
@@ -714,13 +772,35 @@ $miExit      = $menu.Items.Add("Exit")
 $tray.ContextMenuStrip = $menu
 $miAutostart.Checked = Get-AutostartEnabled
 
-Set-IndicatorVisible $muted
+# Blink timer — toggles indicator visibility every 600 ms when Blink is enabled
+$script:blinkVisible = $true
+$script:blinkTimer   = New-Object System.Windows.Forms.Timer
+$script:blinkTimer.Interval = 600
+$script:blinkTimer.add_Tick({
+    $script:blinkVisible = -not $script:blinkVisible
+    if ($script:blinkVisible) { Set-IndicatorColor $cfg.BarColor } else { Set-IndicatorColor $cfg.PulseColor }
+})
+
+function Update-BlinkState {
+    if ($script:muted -and $cfg.Pulse) {
+        $script:blinkVisible = $true
+        Set-IndicatorColor $cfg.BarColor   # always start from primary color
+        Set-IndicatorVisible $true
+        $script:blinkTimer.Start()
+    } else {
+        $script:blinkTimer.Stop()
+        Set-IndicatorColor $cfg.BarColor   # reset to primary color when stopping
+        Set-IndicatorVisible $script:muted
+    }
+}
+
+Update-BlinkState
 
 # Toggle mute
 $script:toggle = {
     $script:muted = -not $script:muted
     [AudioHelper]::SetAllMuted($script:muted)
-    Set-IndicatorVisible $script:muted
+    Update-BlinkState
     $tray.Icon = New-TrayIcon $script:muted
     $tray.Text = if ($script:muted) { "MicMuteBar - MUTED" } else { "MicMuteBar" }
 }
@@ -733,8 +813,10 @@ $miSet.add_Click({
         Remove-Indicator
         [System.Windows.Forms.Application]::DoEvents()
         New-Indicator
-        Set-IndicatorVisible $script:muted
+        Update-BlinkState
     }
+    # Sync tray menu checkmark with whatever autostart state is now saved
+    $miAutostart.Checked = Get-AutostartEnabled
     # Re-register with whatever is now in config (new or unchanged)
     $script:anchor.SetHotkey([int]$cfg.HotkeyMods, [int]$cfg.HotkeyVK) | Out-Null
 })
@@ -744,6 +826,7 @@ $miAutostart.add_Click({
     $miAutostart.Checked = $newState
 })
 $miExit.add_Click({
+    $script:blinkTimer.Stop()
     [AudioHelper]::SetAllMuted($false)
     $tray.Visible = $false
     $script:anchor.Close()  # OnFormClosed calls ClearHotkey automatically
