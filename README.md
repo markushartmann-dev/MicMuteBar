@@ -13,7 +13,7 @@ The default shortcut is **Win+M**, but you can change it to any combination you 
 - **One hotkey** mutes every microphone simultaneously — works across Teams, Zoom, Discord, and any other app
 - **Works everywhere** — desktop, Explorer, any application, even when nothing is focused
 - **Status indicator** appears on all monitors when muted, disappears when unmuted
-- **Two indicator styles** — full-width bar or a freely positionable circle
+- **Four indicator styles** — bar, circle, border (full screen frame), or corner squares
 - **Click-through** — the indicator never blocks anything you're working on
 - **Configurable hotkey** — started as Win+M, now fully customizable: set any key combination you like via Settings
 - **Autostart** — optional one-click Windows startup integration
@@ -52,7 +52,7 @@ Right-click the tray icon → **Settings**:
 | Text | `MIC MUTED` | Text shown in the bar (leave empty for no text) |
 | Color | `#FF2020` | Indicator color (any hex value) |
 | Opacity | `90 %` | Transparency (10 = nearly invisible, 100 = fully opaque) |
-| Indicator | `bar` | `bar` — full-width bar on every monitor · `circle` — single dot, freely positionable |
+| Indicator | `bar` | `bar` · `circle` · `border` · `corner` — see sections below |
 
 ### Bar
 | Option | Default | Description |
@@ -67,6 +67,22 @@ Right-click the tray icon → **Settings**:
 | Circle Size | `80 px` | Diameter in pixels |
 | Circle X | `50 %` | Horizontal position on primary screen (% from left) |
 | Circle Y | `10 %` | Vertical position on primary screen (% from top) |
+
+### Border
+A complete rectangular frame around every monitor.
+
+| Option | Default | Description |
+|---|---|---|
+| Thickness | `8 px` | Width of the border line |
+| Gap from edge | `0 px` | Inset from the screen edge (0 = flush with edge) |
+
+### Corner
+A small square in each corner of every monitor.
+
+| Option | Default | Description |
+|---|---|---|
+| Size | `40 px` | Width and height of each corner square |
+| Edge offset | `0 px` | Distance from the screen corner (0 = flush with corner) |
 
 ### Hotkey
 | Option | Default | Description |

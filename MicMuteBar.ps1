@@ -21,10 +21,14 @@ $defaults  = [ordered]@{
     BarOpacity    = 90        # 10-100
     HotkeyMods    = 8         # bitmask: 1=Ctrl 2=Shift 4=Alt 8=Win
     HotkeyVK      = 77        # virtual-key code (77 = M)
-    IndicatorType = "bar"     # bar | circle
-    CircleSize    = 80        # diameter in pixels
-    CircleX       = 50        # % from left of primary screen
-    CircleY       = 10        # % from top of primary screen
+    IndicatorType    = "bar"     # bar | circle | border | corner
+    CircleSize       = 80        # diameter in pixels
+    CircleX          = 50        # % from left of primary screen
+    CircleY          = 10        # % from top of primary screen
+    BorderThickness  = 8         # border line thickness in pixels
+    BorderGap        = 0         # inset from screen edge in pixels
+    CornerSize       = 40        # corner square size in pixels
+    CornerOffset     = 0         # offset from screen corners in pixels
 }
 if (Test-Path $cfgPath) {
     $raw = Get-Content $cfgPath -Raw | ConvertFrom-Json
@@ -399,14 +403,51 @@ function New-Circle {
     return New-Object CircleForm $cx, $cy, $size, $cfg.BarColor, $alpha
 }
 
+# ── Create border indicator (4 bars forming a complete frame per monitor) ───────
+function New-BorderForms {
+    $result = @()
+    foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
+        $t     = [Math]::Max(1, [int]$cfg.BorderThickness)
+        $g     = [Math]::Max(0, [int]$cfg.BorderGap)
+        $alpha = [byte]([Math]::Max(10, [Math]::Min(100, [int]$cfg.BarOpacity)) * 255 / 100)
+        $rx    = $screen.Bounds.Left + $g
+        $ry    = $screen.Bounds.Top  + $g
+        $rw    = $screen.Bounds.Width  - 2 * $g
+        $rh    = $screen.Bounds.Height - 2 * $g
+        # Top and bottom cover full width (including corners)
+        $result += New-Object BarForm $rx,             $ry,              $rw, $t,          $cfg.BarColor, $alpha, ""
+        $result += New-Object BarForm $rx,             ($ry+$rh-$t),     $rw, $t,          $cfg.BarColor, $alpha, ""
+        # Left and right fill the middle height (corners already covered above)
+        $result += New-Object BarForm $rx,             ($ry+$t),         $t,  ($rh-2*$t),  $cfg.BarColor, $alpha, ""
+        $result += New-Object BarForm ($rx+$rw-$t),    ($ry+$t),         $t,  ($rh-2*$t),  $cfg.BarColor, $alpha, ""
+    }
+    return $result
+}
+
+# ── Create corner indicator (4 squares per monitor, one in each corner) ─────────
+function New-CornerForms {
+    $result = @()
+    foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
+        $s     = [Math]::Max(4, [int]$cfg.CornerSize)
+        $o     = [Math]::Max(0, [int]$cfg.CornerOffset)
+        $alpha = [byte]([Math]::Max(10, [Math]::Min(100, [int]$cfg.BarOpacity)) * 255 / 100)
+        $l     = $screen.Bounds.Left;  $r = $screen.Bounds.Right
+        $top   = $screen.Bounds.Top;   $b = $screen.Bounds.Bottom
+        $result += New-Object BarForm ($l+$o),     ($top+$o),  $s, $s, $cfg.BarColor, $alpha, ""  # top-left
+        $result += New-Object BarForm ($r-$s-$o),  ($top+$o),  $s, $s, $cfg.BarColor, $alpha, ""  # top-right
+        $result += New-Object BarForm ($l+$o),     ($b-$s-$o), $s, $s, $cfg.BarColor, $alpha, ""  # bottom-left
+        $result += New-Object BarForm ($r-$s-$o),  ($b-$s-$o), $s, $s, $cfg.BarColor, $alpha, ""  # bottom-right
+    }
+    return $result
+}
+
 # ── Indicator lifecycle ────────────────────────────────────────────────────────
 function New-Indicator {
-    if ($cfg.IndicatorType -eq "circle") {
-        $script:circle = New-Circle
-        $script:bars   = @()
-    } else {
-        $script:bars   = New-Bars
-        $script:circle = $null
+    switch ($cfg.IndicatorType) {
+        "circle" { $script:circle = New-Circle;       $script:bars = @() }
+        "border" { $script:bars   = New-BorderForms;  $script:circle = $null }
+        "corner" { $script:bars   = New-CornerForms;  $script:circle = $null }
+        default  { $script:bars   = New-Bars;         $script:circle = $null }
     }
 }
 
@@ -469,15 +510,16 @@ function Show-HotkeyCapture {
 # ── Settings dialog ────────────────────────────────────────────────────────────
 function Show-Settings {
     $dlg = New-Object System.Windows.Forms.Form
-    $dlg.Text = "MicMuteBar - Settings"; $dlg.Size = New-Object System.Drawing.Size 380,530
+    $dlg.Text = "MicMuteBar — Settings"
     $dlg.FormBorderStyle = 'FixedDialog'; $dlg.StartPosition = 'CenterScreen'
     $dlg.MaximizeBox = $false; $dlg.MinimizeBox = $false; $dlg.TopMost = $true; $dlg.KeyPreview = $true
 
+    # Helpers — $dlg accessed via PowerShell dynamic scope
     function Add-Sep([string]$text, [int]$y) {
         $s = New-Object System.Windows.Forms.Label; $s.Text = $text
         $s.Location = New-Object System.Drawing.Point 12,$y; $s.Size = New-Object System.Drawing.Size 340,18
         $s.ForeColor = [System.Drawing.Color]::Gray; $s.Font = New-Object System.Drawing.Font "Segoe UI",8
-        $dlg.Controls.Add($s)
+        $dlg.Controls.Add($s); return $s
     }
     function Add-Row([string]$lbl, $ctl, [int]$y) {
         $l = New-Object System.Windows.Forms.Label; $l.Text = $lbl
@@ -486,26 +528,30 @@ function Show-Settings {
         $ctl.Location = New-Object System.Drawing.Point 158,$y; $ctl.Size = New-Object System.Drawing.Size 190,22
         $dlg.Controls.Add($ctl)
     }
+    function Make-Nud([int]$mn,[int]$mx,[int]$v) {
+        $n = New-Object System.Windows.Forms.NumericUpDown
+        $n.Minimum=$mn; $n.Maximum=$mx; $n.Value=[Math]::Max($mn,[Math]::Min($mx,$v)); return $n
+    }
+    # Add a label+control row inside a panel (relative coords)
+    function Panel-Row($pnl,[string]$lbl,$ctl,[int]$ry) {
+        $l = New-Object System.Windows.Forms.Label; $l.Text = $lbl
+        $l.Location = New-Object System.Drawing.Point 12,($ry+3); $l.Size = New-Object System.Drawing.Size 140,20
+        $pnl.Controls.Add($l)
+        $ctl.Location = New-Object System.Drawing.Point 158,$ry; $ctl.Size = New-Object System.Drawing.Size 190,22
+        $pnl.Controls.Add($ctl)
+    }
 
     $y = 12
 
-    # General
-    $txtText    = New-Object System.Windows.Forms.TextBox;       $txtText.Text = $cfg.BarText
-    $txtColor   = New-Object System.Windows.Forms.TextBox;       $txtColor.Text = $cfg.BarColor
-    $nudOpacity = New-Object System.Windows.Forms.NumericUpDown; $nudOpacity.Minimum=10; $nudOpacity.Maximum=100
-    $nudOpacity.Value = [Math]::Max(10,[Math]::Min(100,[int]$cfg.BarOpacity))
-    $cboType    = New-Object System.Windows.Forms.ComboBox;      $cboType.DropDownStyle='DropDownList'
-    @("bar","circle") | ForEach-Object { $cboType.Items.Add($_) | Out-Null }
-    $cboType.SelectedItem = if ($cfg.IndicatorType -eq "circle") { "circle" } else { "bar" }
+    # ── General ──────────────────────────────────────────────────────────────────
+    $txtText = New-Object System.Windows.Forms.TextBox; $txtText.Text = $cfg.BarText
+    Add-Row "Text:" $txtText $y; $y += 32
 
-    Add-Row "Text:"        $txtText    $y; $y += 32
-
-    # Color row — hex input + live swatch + color picker button
-    $lColor = New-Object System.Windows.Forms.Label; $lColor.Text = "Color (Hex):"
-    $lColor.Location = New-Object System.Drawing.Point 12,($y+3); $lColor.Size = New-Object System.Drawing.Size 140,20
-    $dlg.Controls.Add($lColor)
-    $txtColor.Location = New-Object System.Drawing.Point 158,$y; $txtColor.Size = New-Object System.Drawing.Size 110,22
-    $dlg.Controls.Add($txtColor)
+    # Color row — hex input + live swatch + color picker
+    $txtColor = New-Object System.Windows.Forms.TextBox; $txtColor.Text = $cfg.BarColor
+    $lc = New-Object System.Windows.Forms.Label; $lc.Text = "Color (Hex):"
+    $lc.Location = New-Object System.Drawing.Point 12,($y+3); $lc.Size = New-Object System.Drawing.Size 140,20; $dlg.Controls.Add($lc)
+    $txtColor.Location = New-Object System.Drawing.Point 158,$y; $txtColor.Size = New-Object System.Drawing.Size 110,22; $dlg.Controls.Add($txtColor)
     $pnlColor = New-Object System.Windows.Forms.Panel
     $pnlColor.Location = New-Object System.Drawing.Point 272,$y; $pnlColor.Size = New-Object System.Drawing.Size 22,22
     $pnlColor.BorderStyle = 'FixedSingle'
@@ -514,97 +560,131 @@ function Show-Settings {
     $btnPick = New-Object System.Windows.Forms.Button
     $btnPick.Text = "Pick"; $btnPick.Location = New-Object System.Drawing.Point 298,$y
     $btnPick.Size = New-Object System.Drawing.Size 50,22; $dlg.Controls.Add($btnPick)
-    $txtColor.add_TextChanged({
-        try { $pnlColor.BackColor = [System.Drawing.ColorTranslator]::FromHtml($txtColor.Text) } catch {}
-    })
+    $txtColor.add_TextChanged({ try { $pnlColor.BackColor = [System.Drawing.ColorTranslator]::FromHtml($txtColor.Text) } catch {} })
     $btnPick.add_Click({
         $cd = New-Object System.Windows.Forms.ColorDialog; $cd.FullOpen = $true
         try { $cd.Color = [System.Drawing.ColorTranslator]::FromHtml($txtColor.Text) } catch {}
-        if ($cd.ShowDialog() -eq 'OK') {
-            $txtColor.Text = "#{0:X2}{1:X2}{2:X2}" -f $cd.Color.R, $cd.Color.G, $cd.Color.B
-        }
+        if ($cd.ShowDialog() -eq 'OK') { $txtColor.Text = "#{0:X2}{1:X2}{2:X2}" -f $cd.Color.R, $cd.Color.G, $cd.Color.B }
     })
     $y += 32
 
-    Add-Row "Opacity (%):"   $nudOpacity $y; $y += 32
-    Add-Row "Indicator:"     $cboType    $y; $y += 32
+    $nudOpacity = Make-Nud 10 100 ([int]$cfg.BarOpacity)
+    Add-Row "Opacity (%):" $nudOpacity $y; $y += 32
 
-    # Bar
-    Add-Sep "── Bar ──────────────────────────────────────────" $y; $y += 22
-    $nudHeight = New-Object System.Windows.Forms.NumericUpDown; $nudHeight.Minimum=2;  $nudHeight.Maximum=120
-    $nudHeight.Value = [Math]::Max(2,[Math]::Min(120,[int]$cfg.BarHeight))
-    $nudWidth  = New-Object System.Windows.Forms.NumericUpDown; $nudWidth.Minimum=10;  $nudWidth.Maximum=100
-    $nudWidth.Value  = [Math]::Max(10,[Math]::Min(100,[int]$cfg.BarWidthPct))
-    $cboPos    = New-Object System.Windows.Forms.ComboBox;      $cboPos.DropDownStyle='DropDownList'
+    $cboType = New-Object System.Windows.Forms.ComboBox; $cboType.DropDownStyle = 'DropDownList'
+    @("bar","circle","border","corner") | ForEach-Object { $cboType.Items.Add($_) | Out-Null }
+    $cboType.SelectedItem = switch ($cfg.IndicatorType) { "circle"{"circle"} "border"{"border"} "corner"{"corner"} default{"bar"} }
+    Add-Row "Indicator:" $cboType $y; $y += 32
+
+    # ── Indicator-specific options (dynamic) ──────────────────────────────────────
+    $sepOpt = Add-Sep "" $y; $y += 22
+    $optY   = $y  # all option panels sit at the same position
+
+    function New-OptPanel {
+        $p = New-Object System.Windows.Forms.Panel
+        $p.Location = New-Object System.Drawing.Point 0,$optY
+        $p.Size     = New-Object System.Drawing.Size 380,96
+        $p.Visible  = $false
+        $dlg.Controls.Add($p); return $p
+    }
+
+    # Bar options (3 rows)
+    $pBar    = New-OptPanel
+    $nudBarH = Make-Nud 2 120 ([int]$cfg.BarHeight)
+    $nudBarW = Make-Nud 10 100 ([int]$cfg.BarWidthPct)
+    $cboPos  = New-Object System.Windows.Forms.ComboBox; $cboPos.DropDownStyle = 'DropDownList'
     @("top","bottom","left","right") | ForEach-Object { $cboPos.Items.Add($_) | Out-Null }
-    $cboPos.SelectedItem = switch ($cfg.BarPosition) { "bottom" {"bottom"} "left" {"left"} "right" {"right"} default {"top"} }
+    $cboPos.SelectedItem = switch ($cfg.BarPosition) { "bottom"{"bottom"} "left"{"left"} "right"{"right"} default{"top"} }
+    Panel-Row $pBar "Thickness (px):" $nudBarH 0
+    Panel-Row $pBar "Length (%):"     $nudBarW 32
+    Panel-Row $pBar "Position:"       $cboPos  64
 
-    Add-Row "Bar Height (px):" $nudHeight $y; $y += 32
-    Add-Row "Bar Width (%):"   $nudWidth  $y; $y += 32
-    Add-Row "Bar Position:"    $cboPos    $y; $y += 32
+    # Circle options (3 rows)
+    $pCircle  = New-OptPanel
+    $nudCircS = Make-Nud 20 400 ([int]$cfg.CircleSize)
+    $nudCircX = Make-Nud 0 100 ([int]$cfg.CircleX)
+    $nudCircY = Make-Nud 0 100 ([int]$cfg.CircleY)
+    Panel-Row $pCircle "Size (px):"      $nudCircS 0
+    Panel-Row $pCircle "Position X (%):" $nudCircX 32
+    Panel-Row $pCircle "Position Y (%):" $nudCircY 64
 
-    # Circle
-    Add-Sep "── Circle ───────────────────────────────────────" $y; $y += 22
-    $nudSize = New-Object System.Windows.Forms.NumericUpDown; $nudSize.Minimum=20; $nudSize.Maximum=400
-    $nudSize.Value = [Math]::Max(20,[Math]::Min(400,[int]$cfg.CircleSize))
-    $nudCX = New-Object System.Windows.Forms.NumericUpDown; $nudCX.Minimum=0; $nudCX.Maximum=100
-    $nudCX.Value = [Math]::Max(0,[Math]::Min(100,[int]$cfg.CircleX))
-    $nudCY = New-Object System.Windows.Forms.NumericUpDown; $nudCY.Minimum=0; $nudCY.Maximum=100
-    $nudCY.Value = [Math]::Max(0,[Math]::Min(100,[int]$cfg.CircleY))
+    # Border options (2 rows)
+    $pBorder  = New-OptPanel
+    $nudBordT = Make-Nud 1 60 ([int]$cfg.BorderThickness)
+    $nudBordG = Make-Nud 0 200 ([int]$cfg.BorderGap)
+    Panel-Row $pBorder "Thickness (px):"    $nudBordT 0
+    Panel-Row $pBorder "Gap from edge (px):" $nudBordG 32
 
-    Add-Row "Circle Size (px):" $nudSize $y; $y += 32
-    Add-Row "Circle X (%):"     $nudCX   $y; $y += 32
-    Add-Row "Circle Y (%):"     $nudCY   $y; $y += 32
+    # Corner options (2 rows)
+    $pCorner  = New-OptPanel
+    $nudCornS = Make-Nud 4 300 ([int]$cfg.CornerSize)
+    $nudCornO = Make-Nud 0 200 ([int]$cfg.CornerOffset)
+    Panel-Row $pCorner "Size (px):"        $nudCornS 0
+    Panel-Row $pCorner "Edge offset (px):" $nudCornO 32
 
-    # Hotkey
-    Add-Sep "── Hotkey ───────────────────────────────────────" $y; $y += 22
-    $lblHK = New-Object System.Windows.Forms.Label
-    $lblHK.Text = "Shortcut:"; $lblHK.Location = New-Object System.Drawing.Point 12,($y+3)
-    $lblHK.Size = New-Object System.Drawing.Size 140,20; $dlg.Controls.Add($lblHK)
+    $y = $optY + 96  # fixed height for options area (fits 3 rows)
 
+    # ── Hotkey ───────────────────────────────────────────────────────────────────
+    Add-Sep "── Hotkey ───────────────────────────────────────" $y | Out-Null; $y += 22
+    $lhk = New-Object System.Windows.Forms.Label; $lhk.Text = "Shortcut:"
+    $lhk.Location = New-Object System.Drawing.Point 12,($y+3); $lhk.Size = New-Object System.Drawing.Size 140,20; $dlg.Controls.Add($lhk)
     $txtHotkey = New-Object System.Windows.Forms.TextBox
-    $txtHotkey.Text = Get-HotkeyText ([int]$cfg.HotkeyMods) ([int]$cfg.HotkeyVK)
-    $txtHotkey.ReadOnly = $true
-    $txtHotkey.Location = New-Object System.Drawing.Point 158,$y; $txtHotkey.Size = New-Object System.Drawing.Size 120,22
-    $dlg.Controls.Add($txtHotkey)
-
+    $txtHotkey.Text = Get-HotkeyText ([int]$cfg.HotkeyMods) ([int]$cfg.HotkeyVK); $txtHotkey.ReadOnly = $true
+    $txtHotkey.Location = New-Object System.Drawing.Point 158,$y; $txtHotkey.Size = New-Object System.Drawing.Size 120,22; $dlg.Controls.Add($txtHotkey)
     $btnChange = New-Object System.Windows.Forms.Button
     $btnChange.Text = "Change"; $btnChange.Location = New-Object System.Drawing.Point 284,$y
     $btnChange.Size = New-Object System.Drawing.Size 64,22; $dlg.Controls.Add($btnChange)
-
-    $script:_pendingMods = [int]$cfg.HotkeyMods
-    $script:_pendingVK   = [int]$cfg.HotkeyVK
-
+    $script:_pendingMods = [int]$cfg.HotkeyMods; $script:_pendingVK = [int]$cfg.HotkeyVK
     $btnChange.add_Click({
-        # Hotkey is already unregistered while settings is open (done by caller).
-        # Just capture the new combination — no need to suspend/resume anything.
         $cap = Show-HotkeyCapture
         if ($cap) {
-            $script:_pendingMods = $cap.Mods
-            $script:_pendingVK   = $cap.VK
+            $script:_pendingMods = $cap.Mods; $script:_pendingVK = $cap.VK
             $txtHotkey.Text = Get-HotkeyText $cap.Mods $cap.VK
         }
     })
     $y += 36
 
-    $btn = New-Object System.Windows.Forms.Button
-    $btn.Text = "Apply"; $btn.Location = New-Object System.Drawing.Point 120,($y+8)
-    $btn.Size = New-Object System.Drawing.Size 130,28; $btn.DialogResult = 'OK'
-    $dlg.Controls.Add($btn); $dlg.AcceptButton = $btn
+    # ── Apply ─────────────────────────────────────────────────────────────────────
+    $btnOK = New-Object System.Windows.Forms.Button
+    $btnOK.Text = "Apply"; $btnOK.Location = New-Object System.Drawing.Point 120,($y+6)
+    $btnOK.Size = New-Object System.Drawing.Size 130,28; $btnOK.DialogResult = 'OK'
+    $dlg.Controls.Add($btnOK); $dlg.AcceptButton = $btnOK
+    $dlg.Size = New-Object System.Drawing.Size 380,($y+50)
 
+    # ── Show/hide indicator panels on type change ─────────────────────────────────
+    # Uses individual panel variables — avoids hashtable/array closure issues in ps2exe
+    $refreshSections = {
+        $sel = $cboType.SelectedItem
+        $pBar.Visible    = ($sel -eq "bar")
+        $pCircle.Visible = ($sel -eq "circle")
+        $pBorder.Visible = ($sel -eq "border")
+        $pCorner.Visible = ($sel -eq "corner")
+        if ($sel -eq "bar")    { $sepOpt.Text = "── Bar ──────────────────────────────────────────" }
+        if ($sel -eq "circle") { $sepOpt.Text = "── Circle ───────────────────────────────────────" }
+        if ($sel -eq "border") { $sepOpt.Text = "── Border ───────────────────────────────────────" }
+        if ($sel -eq "corner") { $sepOpt.Text = "── Corner ───────────────────────────────────────" }
+    }
+    & $refreshSections
+    $cboType.add_SelectedIndexChanged($refreshSections)
+
+    # ── ShowDialog ────────────────────────────────────────────────────────────────
     if ($dlg.ShowDialog() -eq 'OK') {
-        $cfg.BarText       = $txtText.Text
-        $cfg.BarColor      = $txtColor.Text
-        $cfg.BarOpacity    = [int]$nudOpacity.Value
-        $cfg.IndicatorType = $cboType.SelectedItem
-        $cfg.BarHeight     = [int]$nudHeight.Value
-        $cfg.BarWidthPct   = [int]$nudWidth.Value
-        $cfg.BarPosition   = $cboPos.SelectedItem
-        $cfg.CircleSize    = [int]$nudSize.Value
-        $cfg.CircleX       = [int]$nudCX.Value
-        $cfg.CircleY       = [int]$nudCY.Value
-        $cfg.HotkeyMods    = $script:_pendingMods
-        $cfg.HotkeyVK      = $script:_pendingVK
+        $cfg.BarText         = $txtText.Text
+        $cfg.BarColor        = $txtColor.Text
+        $cfg.BarOpacity      = [int]$nudOpacity.Value
+        $cfg.IndicatorType   = $cboType.SelectedItem
+        $cfg.BarHeight       = [int]$nudBarH.Value
+        $cfg.BarWidthPct     = [int]$nudBarW.Value
+        $cfg.BarPosition     = $cboPos.SelectedItem
+        $cfg.CircleSize      = [int]$nudCircS.Value
+        $cfg.CircleX         = [int]$nudCircX.Value
+        $cfg.CircleY         = [int]$nudCircY.Value
+        $cfg.BorderThickness = [int]$nudBordT.Value
+        $cfg.BorderGap       = [int]$nudBordG.Value
+        $cfg.CornerSize      = [int]$nudCornS.Value
+        $cfg.CornerOffset    = [int]$nudCornO.Value
+        $cfg.HotkeyMods      = $script:_pendingMods
+        $cfg.HotkeyVK        = $script:_pendingVK
         $cfg | ConvertTo-Json | Set-Content $cfgPath -Encoding UTF8
         return $true
     }
