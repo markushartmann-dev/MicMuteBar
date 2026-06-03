@@ -765,10 +765,10 @@ $tray.Text    = if ($muted) { "MicMuteBar - MUTED" } else { "MicMuteBar" }
 $tray.Visible = $true
 
 $menu        = New-Object System.Windows.Forms.ContextMenuStrip
+$miExit      = $menu.Items.Add("Exit")          # first = top of popup = furthest from taskbar
+$menu.Items.Add("-") | Out-Null
 $miSet       = $menu.Items.Add("Settings")
 $miAutostart = $menu.Items.Add("Start with Windows")
-$menu.Items.Add("-") | Out-Null
-$miExit      = $menu.Items.Add("Exit")
 $tray.ContextMenuStrip = $menu
 $miAutostart.Checked = Get-AutostartEnabled
 
