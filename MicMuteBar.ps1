@@ -64,6 +64,7 @@ public static class Win32 {
     [DllImport("user32.dll")] public static extern bool  SetWindowPos(IntPtr hWnd, IntPtr hWndAfter, int x, int y, int cx, int cy, uint uFlags);
     [DllImport("user32.dll")] public static extern bool  SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vKey);
+    [DllImport("user32.dll")] public static extern bool  SetForegroundWindow(IntPtr hWnd);
 }
 
 // ──── Core Audio COM interfaces ────────────────────────────────────────────────
@@ -765,11 +766,19 @@ $tray.Text    = if ($muted) { "MicMuteBar - MUTED" } else { "MicMuteBar" }
 $tray.Visible = $true
 
 $menu        = New-Object System.Windows.Forms.ContextMenuStrip
-$miExit      = $menu.Items.Add("Exit")          # first = top of popup = furthest from taskbar
-$menu.Items.Add("-") | Out-Null
 $miSet       = $menu.Items.Add("Settings")
 $miAutostart = $menu.Items.Add("Start with Windows")
-$tray.ContextMenuStrip = $menu
+$menu.Items.Add("-") | Out-Null
+$miExit      = $menu.Items.Add("Exit")
+# Show menu manually via MouseUp: SetForegroundWindow brings it to the front and
+# ContextMenuStrip.Show(Point) auto-positions above the taskbar — no clipping.
+$tray.add_MouseUp({
+    param($s, $e)
+    if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Right) {
+        [Win32]::SetForegroundWindow($script:anchor.Handle) | Out-Null
+        $menu.Show([System.Windows.Forms.Cursor]::Position)
+    }
+})
 $miAutostart.Checked = Get-AutostartEnabled
 
 # Blink timer — toggles indicator visibility every 600 ms when Blink is enabled
