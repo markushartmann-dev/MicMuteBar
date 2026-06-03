@@ -110,7 +110,7 @@ A checkmark indicates it is enabled. MicMuteBar will start automatically on logi
 
 ## How it works
 
-MicMuteBar is a single PowerShell script (~420 lines) with no external dependencies.
+MicMuteBar is a single PowerShell script (~850 lines) with no external dependencies.
 
 - **Hotkey** — uses `RegisterHotKey` (Windows global hotkey API), so the shortcut fires regardless of which application or window is focused — including the desktop
 - **Audio** — controls all capture devices via the Windows Core Audio API (COM) directly, no third-party audio library required
@@ -118,7 +118,7 @@ MicMuteBar is a single PowerShell script (~420 lines) with no external dependenc
 - **Circle overlay** — same click-through approach; circular shape via `Form.Region` clipping
 - **Pulse** — `System.Windows.Forms.Timer` at 600 ms alternates `BackColor` between the two configured colors while muted; indicator stays visible, only the color changes
 - **Autostart** — creates/removes a shortcut in the Windows startup folder via `WScript.Shell`
-- **Tray** — standard `NotifyIcon` with a programmatically drawn icon that reflects mute state
+- **Tray** — standard `NotifyIcon` with a programmatically drawn icon that reflects mute state; context menu uses `SetForegroundWindow` + manual `Show(Point)` so it always appears above the taskbar
 
 ---
 
